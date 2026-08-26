@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
+
   <meta
     name="viewport"
     content="width=device-width, initial-scale=1.0"
@@ -95,6 +96,18 @@
       color: #ff5252;
     }
 
+    #connectionStatus.live {
+      color: #00e676;
+    }
+
+    #connectionStatus.connecting {
+      color: #ffca28;
+    }
+
+    #connectionStatus.error {
+      color: #ff5252;
+    }
+
     .controls {
       display: flex;
       gap: 12px;
@@ -102,7 +115,7 @@
     }
 
     button {
-      min-width: 150px;
+      min-width: 160px;
       padding: 13px 20px;
       border: 0;
       border-radius: 8px;
@@ -128,10 +141,28 @@
     #message {
       min-height: 24px;
       margin-top: 14px;
-      color: #b9c1ca;
+      padding: 12px;
+      border-radius: 8px;
+      color: #d6dce2;
+      background: #1b2229;
+      overflow-wrap: anywhere;
+    }
+
+    .warning {
+      margin-top: 16px;
+      padding: 12px;
+      border: 1px solid #795c00;
+      border-radius: 8px;
+      color: #ffe082;
+      background: #302600;
+      font-size: 14px;
     }
 
     @media (max-width: 700px) {
+      body {
+        padding: 12px;
+      }
+
       .status-panel {
         grid-template-columns: 1fr;
       }
@@ -152,13 +183,17 @@
     <h1>Seal Quality Inspection</h1>
 
     <p class="description">
-      A part passes when exactly 10 seals are detected. PASS remains latched
-      until the part is removed.
+      The part passes when exactly 10 seals are detected. PASS remains
+      displayed until the part is removed from the camera.
     </p>
 
     <section class="camera-container">
-      <!-- This displays the annotated video returned by the Workflow. -->
-      <video id="resultVideo" autoplay playsinline muted></video>
+      <video
+        id="resultVideo"
+        autoplay
+        playsinline
+        muted
+      ></video>
     </section>
 
     <section class="status-panel">
@@ -169,21 +204,37 @@
 
       <div class="status-card">
         <div class="status-label">INSPECTION</div>
-        <div id="decision" class="status-value waiting">WAITING</div>
+        <div id="decision" class="status-value waiting">
+          WAITING
+        </div>
       </div>
 
       <div class="status-card">
         <div class="status-label">CONNECTION</div>
-        <div id="connectionStatus" class="status-value">OFFLINE</div>
+        <div id="connectionStatus" class="status-value">
+          OFFLINE
+        </div>
       </div>
     </section>
 
     <section class="controls">
-      <button id="startButton">Start Inspection</button>
-      <button id="stopButton" disabled>Stop Inspection</button>
+      <button id="startButton">
+        Start Inspection
+      </button>
+
+      <button id="stopButton" disabled>
+        Stop Inspection
+      </button>
     </section>
 
-    <div id="message"></div>
+    <div id="message">
+      Click “Start Inspection” to begin.
+    </div>
+
+    <div class="warning">
+      Prototype only: the API key is stored inside this HTML file.
+      Do not publish or share this file.
+    </div>
   </main>
 
   <script type="module">
@@ -194,9 +245,12 @@
     } from "https://esm.sh/@roboflow/inference-sdk";
 
     /*
-     * DEVELOPMENT ONLY:
-     * Replace this placeholder with a Roboflow API key.
-     * Anyone with access to this HTML file can read the key.
+     * ---------------------------------------------------------
+     * ROBOFLOW SETTINGS
+     * ---------------------------------------------------------
+     *
+     * Paste your real API key between the quotation marks.
+     * Do not paste your API key into chat.
      */
     const ROBOFLOW_API_KEY = "EgigAuelCkpC69SKy2yR";
 
@@ -208,52 +262,118 @@
     const IMAGE_INPUT_NAME = "image";
 
     /*
-     * output_image is essential. It tells WebRTC which Workflow image
-     * output should be returned as the remote video track.
+     * The Workflow output used for the processed video.
+     *
+     * This setting is required. Without it, WebRTC may report:
+     * "videoOutputName is required for streaming mode"
      */
     const VIDEO_OUTPUT = "output_image";
 
+    /*
+     * Structured Workflow outputs returned to JavaScript.
+     */
     const DATA_OUTPUTS = [
       "seal_count",
       "decision",
       "pass_latched"
     ];
 
-    const resultVideo = document.getElementById("resultVideo");
-    const sealCountElement = document.getElementById("sealCount");
-    const decisionElement = document.getElementById("decision");
+    /*
+     * ---------------------------------------------------------
+     * PAGE ELEMENTS
+     * ---------------------------------------------------------
+     */
+    const resultVideo =
+      document.getElementById("resultVideo");
+
+    const sealCountElement =
+      document.getElementById("sealCount");
+
+    const decisionElement =
+      document.getElementById("decision");
+
     const connectionStatusElement =
       document.getElementById("connectionStatus");
-    const messageElement = document.getElementById("message");
-    const startButton = document.getElementById("startButton");
-    const stopButton = document.getElementById("stopButton");
 
+    const messageElement =
+      document.getElementById("message");
+
+    const startButton =
+      document.getElementById("startButton");
+
+    const stopButton =
+      document.getElementById("stopButton");
+
+    /*
+     * ---------------------------------------------------------
+     * CURRENT SESSION
+     * ---------------------------------------------------------
+     */
     let connection = null;
     let localCameraStream = null;
+    let starting = false;
 
     function setMessage(message) {
       messageElement.textContent = message;
     }
 
+    function setConnectionStatus(status) {
+      const normalizedStatus =
+        String(status || "OFFLINE").toUpperCase();
+
+      connectionStatusElement.textContent =
+        normalizedStatus;
+
+      connectionStatusElement.classList.remove(
+        "live",
+        "connecting",
+        "error"
+      );
+
+      if (normalizedStatus === "LIVE") {
+        connectionStatusElement.classList.add("live");
+      } else if (
+        normalizedStatus === "CONNECTING" ||
+        normalizedStatus === "CAMERA"
+      ) {
+        connectionStatusElement.classList.add("connecting");
+      } else if (normalizedStatus === "ERROR") {
+        connectionStatusElement.classList.add("error");
+      }
+    }
+
     function setDecision(value) {
-      const decision = String(value || "WAITING").toUpperCase();
+      const decision =
+        String(value || "WAITING").toUpperCase();
 
       decisionElement.textContent = decision;
-      decisionElement.classList.remove("pass", "waiting", "error");
+
+      decisionElement.classList.remove(
+        "pass",
+        "waiting",
+        "error"
+      );
 
       if (decision === "PASS") {
         decisionElement.classList.add("pass");
+      } else if (decision === "ERROR") {
+        decisionElement.classList.add("error");
       } else {
         decisionElement.classList.add("waiting");
       }
     }
 
     /*
-     * Different SDK versions may wrap Workflow outputs under "outputs".
-     * This helper handles either response shape.
+     * Some SDK responses place Workflow results under "outputs".
+     * Others provide the output fields at the top level.
      */
     function getOutputs(data) {
-      if (data && typeof data === "object" && data.outputs) {
+      if (
+        data &&
+        typeof data === "object" &&
+        data.outputs &&
+        typeof data.outputs === "object"
+      ) {
         return data.outputs;
       }
 
@@ -261,60 +381,110 @@
     }
 
     function handleInferenceData(data) {
+      console.log("Roboflow data:", data);
+
       const outputs = getOutputs(data);
 
       if (outputs.seal_count !== undefined) {
-        sealCountElement.textContent = outputs.seal_count;
+        sealCountElement.textContent =
+          String(outputs.seal_count);
       }
 
       if (outputs.decision !== undefined) {
         setDecision(outputs.decision);
       } else if (outputs.pass_latched !== undefined) {
-        setDecision(outputs.pass_latched ? "PASS" : "WAITING");
+        setDecision(
+          outputs.pass_latched ? "PASS" : "WAITING"
+        );
       }
     }
 
+    function stopLocalCamera() {
+      if (
+        localCameraStream &&
+        typeof localCameraStream.getTracks === "function"
+      ) {
+        localCameraStream
+          .getTracks()
+          .forEach((track) => track.stop());
+      }
+
+      localCameraStream = null;
+    }
+
     async function startInspection() {
-      if (connection) {
+      if (starting || connection) {
         return;
       }
 
-      if (ROBOFLOW_API_KEY === "YOUR_ROBOFLOW_API_KEY") {
+      if (
+        !ROBOFLOW_API_KEY ||
+        ROBOFLOW_API_KEY === "YOUR_ROBOFLOW_API_KEY"
+      ) {
         setMessage(
           "Add your Roboflow API key to ROBOFLOW_API_KEY before starting."
         );
+
+        setConnectionStatus("ERROR");
         return;
       }
 
+      starting = true;
       startButton.disabled = true;
       stopButton.disabled = true;
-      connectionStatusElement.textContent = "CONNECTING";
-      setMessage("Requesting camera permission and starting inference…");
+
+      sealCountElement.textContent = "—";
+      setDecision("WAITING");
+      setConnectionStatus("CONNECTING");
+
+      setMessage("Requesting camera permission…");
 
       try {
         /*
-         * Direct-key mode is suitable only for this temporary prototype.
+         * Direct API-key mode is for this local prototype only.
          */
-        const connector = connectors.withApiKey(ROBOFLOW_API_KEY);
+        const connector =
+          connectors.withApiKey(ROBOFLOW_API_KEY);
 
+        /*
+         * Begin with 720p and 15 FPS to reduce bandwidth and
+         * processing load.
+         */
         localCameraStream = await streams.useCamera({
           video: {
-            facingMode: {
-              ideal: "environment"
-            },
             width: {
-              ideal: 1920
+              ideal: 1280
             },
             height: {
-              ideal: 1080
+              ideal: 720
             },
             frameRate: {
-              ideal: 30
+              ideal: 15
             }
           },
           audio: false
         });
 
+        /*
+         * Show the local camera immediately.
+         *
+         * This confirms the camera works while the Roboflow cloud
+         * connection starts.
+         */
+        resultVideo.srcObject = localCameraStream;
+        await resultVideo.play();
+
+        setConnectionStatus("CAMERA");
+
+        setMessage(
+          "Camera connected. Starting Roboflow inference…"
+        );
+
+        stopButton.disabled = false;
+
+        /*
+         * Start the Roboflow WebRTC session.
+         */
         connection = await webrtc.useStream({
           source: localCameraStream,
           connector,
@@ -325,11 +495,14 @@
             imageInputName: IMAGE_INPUT_NAME,
 
             /*
-             * This fixes:
-             * "videoOutputName is required for streaming mode"
+             * This explicitly identifies the Workflow image output
+             * that should be returned as the processed video.
              */
             streamOutputNames: [VIDEO_OUTPUT],
 
+            /*
+             * These values are returned over the WebRTC data channel.
+             */
             dataOutputNames: DATA_OUTPUTS,
 
             requestedRegion: "us",
@@ -340,87 +513,147 @@
           onData: handleInferenceData
         });
 
-        const remoteStream = await connection.remoteStream();
+        setMessage(
+          "Connected to Roboflow. Waiting for the first processed frame…"
+        );
+
+        /*
+         * Receive the annotated video produced by the Workflow.
+         *
+         * The Workflow draws the boxes, seal count, and large green
+         * latched PASS message.
+         */
+        const remoteStream =
+          await connection.remoteStream();
 
         if (!remoteStream) {
-          throw new Error("Roboflow did not return a processed video stream.");
+          throw new Error(
+            "Roboflow connected but did not return a processed video stream."
+          );
         }
 
         resultVideo.srcObject = remoteStream;
         await resultVideo.play();
 
-        connectionStatusElement.textContent = "LIVE";
+        setConnectionStatus("LIVE");
+
         setMessage(
-          "Inspection is live. Initial cloud GPU startup may take a moment."
+          "Inspection is live. Show the complete part to the camera."
         );
 
+        startButton.disabled = true;
         stopButton.disabled = false;
       } catch (error) {
-        console.error(error);
-
-        connectionStatusElement.textContent = "ERROR";
-        decisionElement.textContent = "ERROR";
-        decisionElement.className = "status-value error";
-
-        setMessage(
-          error instanceof Error
-            ? error.message
-            : "Unable to start the inspection."
+        console.error(
+          "Roboflow connection error:",
+          error
         );
 
-        await stopInspection();
-      } finally {
-        if (!connection) {
-          startButton.disabled = false;
+        const errorMessage =
+          error instanceof Error
+            ? error.message
+            : String(error);
+
+        setConnectionStatus("ERROR");
+        setDecision("ERROR");
+
+        /*
+         * Keep the local camera visible if the camera itself worked.
+         * This makes it easier to separate camera failures from
+         * Roboflow connection failures.
+         */
+        if (localCameraStream) {
+          resultVideo.srcObject = localCameraStream;
+
+          try {
+            await resultVideo.play();
+          } catch (videoError) {
+            console.warn(
+              "Could not continue local preview:",
+              videoError
+            );
+          }
         }
+
+        if (connection) {
+          try {
+            await connection.cleanup();
+          } catch (cleanupError) {
+            console.warn(
+              "Connection cleanup failed:",
+              cleanupError
+            );
+          }
+        }
+
+        connection = null;
+
+        setMessage(
+          "Connection error: " + errorMessage
+        );
+
+        startButton.disabled = false;
+        stopButton.disabled = !localCameraStream;
+      } finally {
+        starting = false;
       }
     }
 
     async function stopInspection() {
+      startButton.disabled = true;
       stopButton.disabled = true;
 
-      try {
-        if (connection) {
+      setMessage("Stopping inspection…");
+
+      if (connection) {
+        try {
           await connection.cleanup();
+        } catch (error) {
+          console.warn(
+            "Connection cleanup failed:",
+            error
+          );
         }
-      } catch (error) {
-        console.warn("Connection cleanup failed:", error);
       }
 
       connection = null;
 
-      /*
-       * Stop the physical webcam after the WebRTC connection closes.
-       */
-      if (localCameraStream?.getTracks) {
-        localCameraStream.getTracks().forEach((track) => track.stop());
-      }
+      stopLocalCamera();
 
-      localCameraStream = null;
+      resultVideo.pause();
       resultVideo.srcObject = null;
 
       sealCountElement.textContent = "—";
       setDecision("WAITING");
-      connectionStatusElement.textContent = "OFFLINE";
+      setConnectionStatus("OFFLINE");
+
+      setMessage("Inspection stopped.");
 
       startButton.disabled = false;
       stopButton.disabled = true;
-
-      setMessage("Inspection stopped.");
+      starting = false;
     }
 
-    startButton.addEventListener("click", startInspection);
-    stopButton.addEventListener("click", stopInspection);
+    startButton.addEventListener(
+      "click",
+      startInspection
+    );
 
-    window.addEventListener("beforeunload", () => {
-      if (connection) {
-        connection.cleanup();
-      }
+    stopButton.addEventListener(
+      "click",
+      stopInspection
+    );
 
-      if (localCameraStream?.getTracks) {
-        localCameraStream.getTracks().forEach((track) => track.stop());
+    window.addEventListener(
+      "beforeunload",
+      () => {
+        if (connection) {
+          connection.cleanup();
+        }
+
+        stopLocalCamera();
       }
-    });
+    );
   </script>
 </body>
 </html>
