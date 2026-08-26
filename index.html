@@ -1,0 +1,426 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0"
+  />
+
+  <title>Seal Quality Inspection</title>
+
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      padding: 24px;
+      color: white;
+      background: #101418;
+      font-family: Arial, Helvetica, sans-serif;
+    }
+
+    .app {
+      width: min(1200px, 100%);
+      margin: 0 auto;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+    }
+
+    .description {
+      margin: 0 0 20px;
+      color: #b9c1ca;
+    }
+
+    .camera-container {
+      position: relative;
+      overflow: hidden;
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      border: 3px solid #39434d;
+      border-radius: 14px;
+      background: black;
+    }
+
+    video {
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      background: black;
+    }
+
+    .status-panel {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      margin-top: 16px;
+    }
+
+    .status-card {
+      padding: 16px;
+      text-align: center;
+      border: 1px solid #39434d;
+      border-radius: 10px;
+      background: #1b2229;
+    }
+
+    .status-label {
+      margin-bottom: 8px;
+      color: #aab4be;
+      font-size: 13px;
+      font-weight: bold;
+      letter-spacing: 0.08em;
+    }
+
+    .status-value {
+      font-size: 28px;
+      font-weight: 800;
+    }
+
+    #decision.pass {
+      color: #00e676;
+    }
+
+    #decision.waiting {
+      color: #ffca28;
+    }
+
+    #decision.error {
+      color: #ff5252;
+    }
+
+    .controls {
+      display: flex;
+      gap: 12px;
+      margin-top: 18px;
+    }
+
+    button {
+      min-width: 150px;
+      padding: 13px 20px;
+      border: 0;
+      border-radius: 8px;
+      color: white;
+      font-size: 16px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+
+    #startButton {
+      background: #087f5b;
+    }
+
+    #stopButton {
+      background: #c92a2a;
+    }
+
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.45;
+    }
+
+    #message {
+      min-height: 24px;
+      margin-top: 14px;
+      color: #b9c1ca;
+    }
+
+    @media (max-width: 700px) {
+      .status-panel {
+        grid-template-columns: 1fr;
+      }
+
+      .controls {
+        flex-direction: column;
+      }
+
+      button {
+        width: 100%;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <main class="app">
+    <h1>Seal Quality Inspection</h1>
+
+    <p class="description">
+      A part passes when exactly 10 seals are detected. PASS remains latched
+      until the part is removed.
+    </p>
+
+    <section class="camera-container">
+      <!-- This displays the annotated video returned by the Workflow. -->
+      <video id="resultVideo" autoplay playsinline muted></video>
+    </section>
+
+    <section class="status-panel">
+      <div class="status-card">
+        <div class="status-label">SEAL COUNT</div>
+        <div id="sealCount" class="status-value">—</div>
+      </div>
+
+      <div class="status-card">
+        <div class="status-label">INSPECTION</div>
+        <div id="decision" class="status-value waiting">WAITING</div>
+      </div>
+
+      <div class="status-card">
+        <div class="status-label">CONNECTION</div>
+        <div id="connectionStatus" class="status-value">OFFLINE</div>
+      </div>
+    </section>
+
+    <section class="controls">
+      <button id="startButton">Start Inspection</button>
+      <button id="stopButton" disabled>Stop Inspection</button>
+    </section>
+
+    <div id="message"></div>
+  </main>
+
+  <script type="module">
+    import {
+      connectors,
+      streams,
+      webrtc
+    } from "https://esm.sh/@roboflow/inference-sdk";
+
+    /*
+     * DEVELOPMENT ONLY:
+     * Replace this placeholder with a Roboflow API key.
+     * Anyone with access to this HTML file can read the key.
+     */
+    const ROBOFLOW_API_KEY = "YOUR_ROBOFLOW_API_KEY";
+
+    const WORKSPACE_NAME = "ricardo-avila-20lli";
+
+    const WORKFLOW_ID =
+      "wire-seal-detection-vwire-seal-detection-1-rfdetr-small-t1-logic";
+
+    const IMAGE_INPUT_NAME = "image";
+
+    /*
+     * output_image is essential. It tells WebRTC which Workflow image
+     * output should be returned as the remote video track.
+     */
+    const VIDEO_OUTPUT = "output_image";
+
+    const DATA_OUTPUTS = [
+      "seal_count",
+      "decision",
+      "pass_latched"
+    ];
+
+    const resultVideo = document.getElementById("resultVideo");
+    const sealCountElement = document.getElementById("sealCount");
+    const decisionElement = document.getElementById("decision");
+    const connectionStatusElement =
+      document.getElementById("connectionStatus");
+    const messageElement = document.getElementById("message");
+    const startButton = document.getElementById("startButton");
+    const stopButton = document.getElementById("stopButton");
+
+    let connection = null;
+    let localCameraStream = null;
+
+    function setMessage(message) {
+      messageElement.textContent = message;
+    }
+
+    function setDecision(value) {
+      const decision = String(value || "WAITING").toUpperCase();
+
+      decisionElement.textContent = decision;
+      decisionElement.classList.remove("pass", "waiting", "error");
+
+      if (decision === "PASS") {
+        decisionElement.classList.add("pass");
+      } else {
+        decisionElement.classList.add("waiting");
+      }
+    }
+
+    /*
+     * Different SDK versions may wrap Workflow outputs under "outputs".
+     * This helper handles either response shape.
+     */
+    function getOutputs(data) {
+      if (data && typeof data === "object" && data.outputs) {
+        return data.outputs;
+      }
+
+      return data || {};
+    }
+
+    function handleInferenceData(data) {
+      const outputs = getOutputs(data);
+
+      if (outputs.seal_count !== undefined) {
+        sealCountElement.textContent = outputs.seal_count;
+      }
+
+      if (outputs.decision !== undefined) {
+        setDecision(outputs.decision);
+      } else if (outputs.pass_latched !== undefined) {
+        setDecision(outputs.pass_latched ? "PASS" : "WAITING");
+      }
+    }
+
+    async function startInspection() {
+      if (connection) {
+        return;
+      }
+
+      if (ROBOFLOW_API_KEY === "YOUR_ROBOFLOW_API_KEY") {
+        setMessage(
+          "Add your Roboflow API key to ROBOFLOW_API_KEY before starting."
+        );
+        return;
+      }
+
+      startButton.disabled = true;
+      stopButton.disabled = true;
+      connectionStatusElement.textContent = "CONNECTING";
+      setMessage("Requesting camera permission and starting inference…");
+
+      try {
+        /*
+         * Direct-key mode is suitable only for this temporary prototype.
+         */
+        const connector = connectors.withApiKey(ROBOFLOW_API_KEY);
+
+        localCameraStream = await streams.useCamera({
+          video: {
+            facingMode: {
+              ideal: "environment"
+            },
+            width: {
+              ideal: 1920
+            },
+            height: {
+              ideal: 1080
+            },
+            frameRate: {
+              ideal: 30
+            }
+          },
+          audio: false
+        });
+
+        connection = await webrtc.useStream({
+          source: localCameraStream,
+          connector,
+
+          wrtcParams: {
+            workspaceName: WORKSPACE_NAME,
+            workflowId: WORKFLOW_ID,
+            imageInputName: IMAGE_INPUT_NAME,
+
+            /*
+             * This fixes:
+             * "videoOutputName is required for streaming mode"
+             */
+            streamOutputNames: [VIDEO_OUTPUT],
+
+            dataOutputNames: DATA_OUTPUTS,
+
+            requestedRegion: "us",
+            requestedPlan: "webrtc-gpu-medium",
+            processingTimeout: 3600
+          },
+
+          onData: handleInferenceData
+        });
+
+        const remoteStream = await connection.remoteStream();
+
+        if (!remoteStream) {
+          throw new Error("Roboflow did not return a processed video stream.");
+        }
+
+        resultVideo.srcObject = remoteStream;
+        await resultVideo.play();
+
+        connectionStatusElement.textContent = "LIVE";
+        setMessage(
+          "Inspection is live. Initial cloud GPU startup may take a moment."
+        );
+
+        stopButton.disabled = false;
+      } catch (error) {
+        console.error(error);
+
+        connectionStatusElement.textContent = "ERROR";
+        decisionElement.textContent = "ERROR";
+        decisionElement.className = "status-value error";
+
+        setMessage(
+          error instanceof Error
+            ? error.message
+            : "Unable to start the inspection."
+        );
+
+        await stopInspection();
+      } finally {
+        if (!connection) {
+          startButton.disabled = false;
+        }
+      }
+    }
+
+    async function stopInspection() {
+      stopButton.disabled = true;
+
+      try {
+        if (connection) {
+          await connection.cleanup();
+        }
+      } catch (error) {
+        console.warn("Connection cleanup failed:", error);
+      }
+
+      connection = null;
+
+      /*
+       * Stop the physical webcam after the WebRTC connection closes.
+       */
+      if (localCameraStream?.getTracks) {
+        localCameraStream.getTracks().forEach((track) => track.stop());
+      }
+
+      localCameraStream = null;
+      resultVideo.srcObject = null;
+
+      sealCountElement.textContent = "—";
+      setDecision("WAITING");
+      connectionStatusElement.textContent = "OFFLINE";
+
+      startButton.disabled = false;
+      stopButton.disabled = true;
+
+      setMessage("Inspection stopped.");
+    }
+
+    startButton.addEventListener("click", startInspection);
+    stopButton.addEventListener("click", stopInspection);
+
+    window.addEventListener("beforeunload", () => {
+      if (connection) {
+        connection.cleanup();
+      }
+
+      if (localCameraStream?.getTracks) {
+        localCameraStream.getTracks().forEach((track) => track.stop());
+      }
+    });
+  </script>
+</body>
+</html>
