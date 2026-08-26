@@ -2,10 +2,9 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-
   <meta
     name="viewport"
-    content="width=device-width, initial-scale=1.0"
+    content="width=device-width, initial-scale=1"
   />
 
   <title>Seal Quality Inspection</title>
@@ -84,26 +83,17 @@
       font-weight: 800;
     }
 
-    #decision.pass {
-      color: #00e676;
-    }
-
-    #decision.waiting {
-      color: #ffca28;
-    }
-
-    #decision.error {
-      color: #ff5252;
-    }
-
+    #decision.pass,
     #connectionStatus.live {
       color: #00e676;
     }
 
+    #decision.waiting,
     #connectionStatus.connecting {
       color: #ffca28;
     }
 
+    #decision.error,
     #connectionStatus.error {
       color: #ff5252;
     }
@@ -139,23 +129,13 @@
     }
 
     #message {
-      min-height: 24px;
+      min-height: 48px;
       margin-top: 14px;
       padding: 12px;
       border-radius: 8px;
       color: #d6dce2;
       background: #1b2229;
       overflow-wrap: anywhere;
-    }
-
-    .warning {
-      margin-top: 16px;
-      padding: 12px;
-      border: 1px solid #795c00;
-      border-radius: 8px;
-      color: #ffe082;
-      background: #302600;
-      font-size: 14px;
     }
 
     @media (max-width: 700px) {
@@ -183,7 +163,7 @@
     <h1>Seal Quality Inspection</h1>
 
     <p class="description">
-      The part passes when exactly 10 seals are detected. PASS remains
+      A part passes when exactly 10 seals are detected. PASS remains
       displayed until the part is removed from the camera.
     </p>
 
@@ -230,11 +210,6 @@
     <div id="message">
       Click “Start Inspection” to begin.
     </div>
-
-    <div class="warning">
-      Prototype only: the API key is stored inside this HTML file.
-      Do not publish or share this file.
-    </div>
   </main>
 
   <script type="module">
@@ -245,44 +220,29 @@
     } from "https://esm.sh/@roboflow/inference-sdk";
 
     /*
-     * ---------------------------------------------------------
-     * ROBOFLOW SETTINGS
-     * ---------------------------------------------------------
+     * Replace this with your actual Vercel endpoint.
      *
-     * Paste your real API key between the quotation marks.
-     * Do not paste your API key into chat.
+     * Example:
+     * https://seal-inspection-proxy.vercel.app/api/init-webrtc
      */
-    const ROBOFLOW_API_KEY = "EgigAuelCkpC69SKy2yR";
+    const VERCEL_PROXY_URL =
+      "https://YOUR-VERCEL-PROJECT.vercel.app/api/init-webrtc";
 
-    const WORKSPACE_NAME = "ricardo-avila-20lli";
+    const WORKSPACE_NAME =
+      "ricardo-avila-20lli";
 
     const WORKFLOW_ID =
       "wire-seal-detection-vwire-seal-detection-1-rfdetr-small-t1-logic";
 
     const IMAGE_INPUT_NAME = "image";
-
-    /*
-     * The Workflow output used for the processed video.
-     *
-     * This setting is required. Without it, WebRTC may report:
-     * "videoOutputName is required for streaming mode"
-     */
     const VIDEO_OUTPUT = "output_image";
 
-    /*
-     * Structured Workflow outputs returned to JavaScript.
-     */
     const DATA_OUTPUTS = [
       "seal_count",
       "decision",
       "pass_latched"
     ];
 
-    /*
-     * ---------------------------------------------------------
-     * PAGE ELEMENTS
-     * ---------------------------------------------------------
-     */
     const resultVideo =
       document.getElementById("resultVideo");
 
@@ -304,11 +264,6 @@
     const stopButton =
       document.getElementById("stopButton");
 
-    /*
-     * ---------------------------------------------------------
-     * CURRENT SESSION
-     * ---------------------------------------------------------
-     */
     let connection = null;
     let localCameraStream = null;
     let starting = false;
@@ -317,12 +272,11 @@
       messageElement.textContent = message;
     }
 
-    function setConnectionStatus(status) {
-      const normalizedStatus =
-        String(status || "OFFLINE").toUpperCase();
+    function setConnectionStatus(value) {
+      const status =
+        String(value || "OFFLINE").toUpperCase();
 
-      connectionStatusElement.textContent =
-        normalizedStatus;
+      connectionStatusElement.textContent = status;
 
       connectionStatusElement.classList.remove(
         "live",
@@ -330,14 +284,16 @@
         "error"
       );
 
-      if (normalizedStatus === "LIVE") {
+      if (status === "LIVE") {
         connectionStatusElement.classList.add("live");
       } else if (
-        normalizedStatus === "CONNECTING" ||
-        normalizedStatus === "CAMERA"
+        status === "CONNECTING" ||
+        status === "CAMERA"
       ) {
-        connectionStatusElement.classList.add("connecting");
-      } else if (normalizedStatus === "ERROR") {
+        connectionStatusElement.classList.add(
+          "connecting"
+        );
+      } else if (status === "ERROR") {
         connectionStatusElement.classList.add("error");
       }
     }
@@ -363,10 +319,6 @@
       }
     }
 
-    /*
-     * Some SDK responses place Workflow results under "outputs".
-     * Others provide the output fields at the top level.
-     */
     function getOutputs(data) {
       if (
         data &&
@@ -381,7 +333,7 @@
     }
 
     function handleInferenceData(data) {
-      console.log("Roboflow data:", data);
+      console.log("Roboflow Workflow data:", data);
 
       const outputs = getOutputs(data);
 
@@ -394,7 +346,9 @@
         setDecision(outputs.decision);
       } else if (outputs.pass_latched !== undefined) {
         setDecision(
-          outputs.pass_latched ? "PASS" : "WAITING"
+          outputs.pass_latched
+            ? "PASS"
+            : "WAITING"
         );
       }
     }
@@ -418,60 +372,65 @@
       }
 
       if (
-        !ROBOFLOW_API_KEY ||
-        ROBOFLOW_API_KEY === "YOUR_ROBOFLOW_API_KEY"
+        !VERCEL_PROXY_URL ||
+        VERCEL_PROXY_URL.includes(
+          "YOUR-VERCEL-PROJECT"
+        )
       ) {
+        setConnectionStatus("ERROR");
+        setDecision("ERROR");
+
         setMessage(
-          "Add your Roboflow API key to ROBOFLOW_API_KEY before starting."
+          "Replace YOUR-VERCEL-PROJECT with your actual Vercel project address."
         );
 
-        setConnectionStatus("ERROR");
         return;
       }
 
       starting = true;
+
       startButton.disabled = true;
       stopButton.disabled = true;
 
       sealCountElement.textContent = "—";
+
       setDecision("WAITING");
       setConnectionStatus("CONNECTING");
-
       setMessage("Requesting camera permission…");
 
       try {
         /*
-         * Direct API-key mode is for this local prototype only.
+         * The browser calls Vercel. Vercel securely calls Roboflow.
          */
         const connector =
-          connectors.withApiKey(ROBOFLOW_API_KEY);
+          connectors.withProxyUrl(VERCEL_PROXY_URL);
 
         /*
-         * Begin with 720p and 15 FPS to reduce bandwidth and
-         * processing load.
+         * Start the local camera at 720p and 15 FPS.
          */
-        localCameraStream = await streams.useCamera({
-          video: {
-            width: {
-              ideal: 1280
+        localCameraStream =
+          await streams.useCamera({
+            video: {
+              width: {
+                ideal: 1280
+              },
+              height: {
+                ideal: 720
+              },
+              frameRate: {
+                ideal: 15
+              }
             },
-            height: {
-              ideal: 720
-            },
-            frameRate: {
-              ideal: 15
-            }
-          },
-          audio: false
-        });
+            audio: false
+          });
 
         /*
-         * Show the local camera immediately.
-         *
-         * This confirms the camera works while the Roboflow cloud
-         * connection starts.
+         * Display the local camera immediately while Roboflow
+         * connects.
          */
-        resultVideo.srcObject = localCameraStream;
+        resultVideo.srcObject =
+          localCameraStream;
+
         await resultVideo.play();
 
         setConnectionStatus("CAMERA");
@@ -483,56 +442,69 @@
         stopButton.disabled = false;
 
         /*
-         * Start the Roboflow WebRTC session.
+         * Start the Roboflow Workflow over WebRTC.
          */
         connection = await webrtc.useStream({
           source: localCameraStream,
           connector,
 
           wrtcParams: {
-            workspaceName: WORKSPACE_NAME,
-            workflowId: WORKFLOW_ID,
-            imageInputName: IMAGE_INPUT_NAME,
+            workspaceName:
+              WORKSPACE_NAME,
+
+            workflowId:
+              WORKFLOW_ID,
+
+            imageInputName:
+              IMAGE_INPUT_NAME,
 
             /*
-             * This explicitly identifies the Workflow image output
-             * that should be returned as the processed video.
+             * The annotated Workflow image returned as video.
              */
-            streamOutputNames: [VIDEO_OUTPUT],
+            streamOutputNames: [
+              VIDEO_OUTPUT
+            ],
 
             /*
-             * These values are returned over the WebRTC data channel.
+             * Structured values delivered to JavaScript.
              */
-            dataOutputNames: DATA_OUTPUTS,
+            dataOutputNames:
+              DATA_OUTPUTS,
 
-            requestedRegion: "us",
-            requestedPlan: "webrtc-gpu-medium",
-            processingTimeout: 3600
+            requestedRegion:
+              "us",
+
+            requestedPlan:
+              "webrtc-gpu-medium",
+
+            processingTimeout:
+              3600
           },
 
-          onData: handleInferenceData
+          onData:
+            handleInferenceData
         });
 
         setMessage(
           "Connected to Roboflow. Waiting for the first processed frame…"
         );
 
-        /*
-         * Receive the annotated video produced by the Workflow.
-         *
-         * The Workflow draws the boxes, seal count, and large green
-         * latched PASS message.
-         */
         const remoteStream =
           await connection.remoteStream();
 
         if (!remoteStream) {
           throw new Error(
-            "Roboflow connected but did not return a processed video stream."
+            "Roboflow did not return the processed video stream."
           );
         }
 
-        resultVideo.srcObject = remoteStream;
+        /*
+         * Replace the local preview with the annotated Workflow
+         * output.
+         */
+        resultVideo.srcObject =
+          remoteStream;
+
         await resultVideo.play();
 
         setConnectionStatus("LIVE");
@@ -557,24 +529,6 @@
         setConnectionStatus("ERROR");
         setDecision("ERROR");
 
-        /*
-         * Keep the local camera visible if the camera itself worked.
-         * This makes it easier to separate camera failures from
-         * Roboflow connection failures.
-         */
-        if (localCameraStream) {
-          resultVideo.srcObject = localCameraStream;
-
-          try {
-            await resultVideo.play();
-          } catch (videoError) {
-            console.warn(
-              "Could not continue local preview:",
-              videoError
-            );
-          }
-        }
-
         if (connection) {
           try {
             await connection.cleanup();
@@ -588,12 +542,32 @@
 
         connection = null;
 
+        /*
+         * Keep the local camera visible when the Roboflow
+         * connection fails.
+         */
+        if (localCameraStream) {
+          resultVideo.srcObject =
+            localCameraStream;
+
+          try {
+            await resultVideo.play();
+          } catch (videoError) {
+            console.warn(
+              "Unable to continue local camera preview:",
+              videoError
+            );
+          }
+        }
+
         setMessage(
           "Connection error: " + errorMessage
         );
 
         startButton.disabled = false;
-        stopButton.disabled = !localCameraStream;
+
+        stopButton.disabled =
+          !localCameraStream;
       } finally {
         starting = false;
       }
@@ -624,6 +598,7 @@
       resultVideo.srcObject = null;
 
       sealCountElement.textContent = "—";
+
       setDecision("WAITING");
       setConnectionStatus("OFFLINE");
 
